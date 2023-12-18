@@ -16,7 +16,7 @@ class GracefulKiller:
   def exit_gracefully(self,signum, frame):
     self.kill_now = True
 
-solana_health = Gauge("solana_health", "Solana node healthcheck", ["address"])
+solana_health = Gauge("solana_health", "Solana node healthcheck", ["address", "server_group"])
 
 def healthcheck(server: str):
     request = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
@@ -32,26 +32,26 @@ def healthcheck(server: str):
         print(response.json()['error']['message'])
         return -1
 
-with open("config.yaml", "r") as yamlfile:
-    data = yaml.load(yamlfile, Loader=yaml.FullLoader)
-    print("Read successful")
-
 def main():
     killer = GracefulKiller()
 
     while True:
-        for server in data["solana_servers"]:
-            result = healthcheck(server)
-            solana_health.labels(address=server).set(result)
-        if killer.kill_now:
-            break
-        time.sleep(5)
+        try:
+            for server_group in data["solana_servers"]:
+                for server in server_group["servers"]:
+                    result = healthcheck(server)
+                    solana_health.labels(address=server, server_group=server_group["group_name"]).set(result)
+            if killer.kill_now:
+                break
+            time.sleep(5)
+        except KeyboardInterrupt:
+            sys.exit()
+        except Exception as f:
+            print('main error: ', f)            
 
 if __name__ == '__main__':
+    with open("config.yaml", "r") as yamlfile:
+        data = yaml.load(yamlfile, Loader=yaml.FullLoader)
+        print("Read successful")
     start_http_server(9000)
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit()
-    except Exception as f:
-        print('main error: ', f)
+    main()
