@@ -57,11 +57,11 @@ def main():
                 solana_wallet_balance.labels(address=wallet["value"], name=wallet["name"]).set(result)
             if killer.kill_now:
                 break
-            time.sleep(5)
+            time.sleep(10)
         except KeyboardInterrupt:
             sys.exit()
         except Exception as f:
-            print('main error: ', f)            
+            print('main error: ', f)
 
 if __name__ == '__main__':
     with open("config.yaml", "r") as yamlfile:
