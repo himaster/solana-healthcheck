@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-docker-image:
-    runs-on: ["self-hosted", "k8s-prod"]
+    runs-on: ["gha-runner-scale-set"]
     steps:
 
     - name: Generate build ID
