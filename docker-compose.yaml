@@ -4,7 +4,22 @@ services:
     build:
       dockerfile: Dockerfile
       context: .
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NEON_PROGRAM_ID=NeonVMyRX5GbCrsAHnUwx1nYYoJAtskU1bWUo6JGNyG
     volumes:
       - .:/app
     ports:
       - 127.0.0.1:9000:9000
+
+  redis:
+    image: redis:6.2-alpine
+    restart: always
+    ports:
+      - '6379:6379'
+    command: redis-server --save 20 1 --loglevel warning
+    volumes: 
+      - cache:/data
+volumes:
+  cache:
+    driver: local
