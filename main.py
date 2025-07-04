@@ -28,13 +28,21 @@ solana_wallet_balance = Gauge("solana_wallet_balance", "Solana wallet balance", 
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 r = redis.Redis.from_url(REDIS_URL)
 
-# Get NEON_PROGRAM_ID and SOLANA_RPC from environment variables
-NEON_PROGRAM_ID = os.environ.get('NEON_PROGRAM_ID', 'NeonVMyRX5GbCrsAHnUwx1nYYoJAtskU1bWUo6JGNyG')
-SOLANA_RPC = os.environ.get('SOLANA_RPC', 'https://api.mainnet-beta.solana.com')
-
-neon_tx_success_ratio = Gauge("neon_tx_success_ratio", "Success ratio of Neon EVM transactions")
-neon_tx_count = Counter("neon_tx_count", "Total number of Neon EVM transactions")
-neon_tx_fail_count = Counter("neon_tx_fail_count", "Total number of failed Neon EVM transactions")
+neon_tx_success_ratio = Gauge(
+    "neon_tx_success_ratio",
+    "Success ratio of Neon EVM transactions",
+    ["chain", "program_id", "solana_url"]
+)
+neon_tx_count = Counter(
+    "neon_tx_count",
+    "Total number of Neon EVM transactions",
+    ["chain", "program_id", "solana_url"]
+)
+neon_tx_fail_count = Counter(
+    "neon_tx_fail_count",
+    "Total number of failed Neon EVM transactions",
+    ["chain", "program_id", "solana_url"]
+)
 neon_exporter_last_update_timestamp = Gauge("neon_exporter_last_update_timestamp", "Last successful update timestamp")
 
 neon_proxy_block_lag = Gauge(
@@ -61,7 +69,7 @@ def get_neon_transactions(limit=15):
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getSignaturesForAddress",
-            "params": [NEON_PROGRAM_ID, {"limit": limit}]
+            "params": [NEON_PROGRAM_ID_MAINNET , {"limit": limit}]
         }
         resp = requests.post(SOLANA_RPC, json=req, timeout=10)
         resp.raise_for_status()
@@ -128,10 +136,10 @@ def export_neon_metrics():
                                 r.sadd('neon_failed_signatures', sig)  # Save failed tx signature
                             r.sadd('neon_signatures', sig)
                     # Обновляем метрики после подсчёта
-                    neon_tx_count.inc(success_count + fail_count)
-                    neon_tx_fail_count.inc(fail_count)
+                    neon_tx_count.labels(chain=None, program_id=None, solana_url=None).inc(success_count + fail_count)
+                    neon_tx_fail_count.labels(chain=None, program_id=None, solana_url=None).inc(fail_count)
                     if total > 0:
-                        neon_tx_success_ratio.set(success_count / total)
+                        neon_tx_success_ratio.labels(chain=None, program_id=None, solana_url=None).set(success_count / total)
             # В конце каждого успешного цикла обновляем timestamp
             neon_exporter_last_update_timestamp.set(time.time())
             time.sleep(30)
@@ -140,16 +148,24 @@ def export_neon_metrics():
             print('export_neon_metrics error:', e)
             time.sleep(next(backoff))
 
-def restore_counters():
+def restore_counters(solana_services, redis_conn):
     """
-    Restore Prometheus counters from Redis state on exporter startup
+    Restore Prometheus counters from Redis state for all monitored networks on exporter startup
     """
-    processed_count = r.scard('neon_signatures')
-    failed_count = r.scard('neon_failed_signatures')
-    if processed_count > 0:
-        neon_tx_count.inc(processed_count)
-    if failed_count > 0:
-        neon_tx_fail_count.inc(failed_count)
+    for solana in solana_services:
+        chain = solana.get("chain")
+        program_id = solana.get("program_id")
+        solana_url = solana.get("url")
+        if not (chain and program_id and solana_url):
+            continue
+        redis_key = f"neon_signatures_{chain}_{program_id}"
+        redis_fail_key = f"neon_failed_signatures_{chain}_{program_id}"
+        processed_count = redis_conn.scard(redis_key)
+        failed_count = redis_conn.scard(redis_fail_key)
+        if processed_count > 0:
+            neon_tx_count.labels(chain=chain, program_id=program_id, solana_url=solana_url).inc(processed_count)
+        if failed_count > 0:
+            neon_tx_fail_count.labels(chain=chain, program_id=program_id, solana_url=solana_url).inc(failed_count)
 
 def healthcheck(server: str):
     """
@@ -175,16 +191,27 @@ def healthcheck(server: str):
         print(f'healthcheck error: {e}')
         return -1
 
-def check_balance(wallet: str):
+def check_balance(wallet: dict, solana_services: list):
     """
-    Get Solana wallet balance using getBalance RPC method
+    Get Solana wallet balance using getBalance RPC method, picking endpoint by chain
     """
+    wallet_value = wallet.get("value")
+    wallet_chain = wallet.get("chain")
+    if not wallet_value or not wallet_chain:
+        print(f"Invalid wallet entry: {wallet}")
+        return 0
+    # Найти подходящий endpoint по chain
+    solana = next((s for s in solana_services if s.get("chain") == wallet_chain and s.get("url")), None)
+    if not solana:
+        print(f"No solana_service for chain {wallet_chain} for wallet {wallet_value}")
+        return 0
+    solana_url = solana.get("url")
     try:
-        request = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [wallet]}
-        response = requests.post('https://api.mainnet-beta.solana.com', json=request, timeout=10)
+        request = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [wallet_value]}
+        response = requests.post(solana_url, json=request, timeout=10)
         return int(response.json()["result"]["value"]) / 1000000000
     except Exception as e:
-        print(f'check_balance error: {e}')
+        print(f'check_balance error for {wallet_value} on {solana_url}: {e}')
         return 0
 
 def get_neon_block_number(neon_url):
@@ -262,12 +289,64 @@ def healthcheck_block_lag(neon_services, solana_services):
             except Exception as e:
                 print(f"Exception in block lag check for {neon_name}/{solana_name}: {e}")
 
+def monitor_neon_transactions(solana_services, redis_conn):
+    for solana in solana_services:
+        chain = solana.get("chain")
+        program_id = solana.get("program_id")
+        solana_url = solana.get("url")
+        if not (chain and program_id and solana_url):
+            print(f"Invalid solana_service entry: {solana}")
+            continue
+        redis_key = f"neon_signatures_{chain}_{program_id}"
+        redis_fail_key = f"neon_failed_signatures_{chain}_{program_id}"
+        signatures = []
+        try:
+            req = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [program_id, {"limit": 15}]
+            }
+            resp = requests.post(solana_url, json=req, timeout=10)
+            result = resp.json().get("result", [])
+            signatures = [tx["signature"] for tx in result]
+        except Exception as e:
+            print(f"getSignaturesForAddress error for {chain}: {e}")
+            continue
+        new_sigs = [sig for sig in signatures if not redis_conn.sismember(redis_key, sig)]
+        if not new_sigs:
+            continue
+        success_count = 0
+        fail_count = 0
+        for sig in new_sigs:
+            try:
+                req = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [sig, {"encoding": "json"}]
+                }
+                resp = requests.post(solana_url, json=req, timeout=10)
+                tx = resp.json().get("result", None)
+                if not tx:
+                    continue
+                success = tx["meta"]["err"] is None
+                if success:
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    redis_conn.sadd(redis_fail_key, sig)
+                redis_conn.sadd(redis_key, sig)
+            except Exception as e:
+                print(f"getTransaction error for {chain}: {e}")
+        neon_tx_count.labels(chain=chain, program_id=program_id, solana_url=solana_url).inc(success_count + fail_count)
+        neon_tx_fail_count.labels(chain=chain, program_id=program_id, solana_url=solana_url).inc(fail_count)
+        total = success_count + fail_count
+        if total > 0:
+            neon_tx_success_ratio.labels(chain=chain, program_id=program_id, solana_url=solana_url).set(success_count / total)
+
 def main():
     killer = GracefulKiller()
-    import threading
-    restore_counters()  # Restore counter from Redis before starting metrics export
-    t = threading.Thread(target=export_neon_metrics, daemon=True)
-    t.start()
     # Читаем config.yaml
     try:
         with open("config.yaml", "r") as yamlfile:
@@ -276,6 +355,8 @@ def main():
     except Exception as e:
         print(f"Failed to read config.yaml: {e}", flush=True)
         data = {"solana_servers": [], "wallets": [], "neon_services": [], "solana_services": []}
+    # Восстанавливаем счётчики из Redis
+    restore_counters(data.get("solana_services", []), r)
     while True:
         try:
             # Старая логика
@@ -284,10 +365,12 @@ def main():
                     result = healthcheck(server)
                     solana_health.labels(address=server, server_group=server_group["group_name"]).set(result)
             for wallet in data.get("wallets", []):
-                result = check_balance(wallet["value"])
+                result = check_balance(wallet, data.get("solana_services", []))
                 solana_wallet_balance.labels(address=wallet["value"], name=wallet["name"]).set(result)
             # Новая логика для neon_proxy_block_lag
             healthcheck_block_lag(data.get("neon_services", []), data.get("solana_services", []))
+            # Новый мониторинг Neon транзакций по всем сетям
+            monitor_neon_transactions(data.get("solana_services", []), r)
             if killer.kill_now:
                 break
             time.sleep(10)

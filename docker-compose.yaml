@@ -6,7 +6,6 @@ services:
       context: .
     environment:
       - REDIS_URL=redis://redis:6379/0
-      - NEON_PROGRAM_ID=NeonVMyRX5GbCrsAHnUwx1nYYoJAtskU1bWUo6JGNyG
     volumes:
       - .:/app
     ports:
