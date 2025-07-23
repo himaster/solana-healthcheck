@@ -26,7 +26,8 @@ jobs:
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
-        username: himaster
+        registry: ghcr.io
+        username: ${{ github.actor }}
         password: ${{ secrets.GH_PAT }}
 
     - name: Build and push image
