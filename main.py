@@ -200,7 +200,7 @@ def check_balance(wallet: dict, solana_services: list):
     if not wallet_value or not wallet_chain:
         print(f"Invalid wallet entry: {wallet}")
         return 0
-    # Найти подходящий endpoint по chain
+    # Find matching endpoint by chain
     solana = next((s for s in solana_services if s.get("chain") == wallet_chain and s.get("url")), None)
     if not solana:
         print(f"No solana_service for chain {wallet_chain} for wallet {wallet_value}")
@@ -215,6 +215,9 @@ def check_balance(wallet: dict, solana_services: list):
         return 0
 
 def get_neon_block_number(neon_url):
+    """
+    Get current block number from Neon Proxy using eth_blockNumber RPC method
+    """
     try:
         req = {
             "jsonrpc": "2.0",
@@ -224,13 +227,16 @@ def get_neon_block_number(neon_url):
         }
         resp = requests.post(neon_url, json=req, timeout=10)
         result = resp.json()["result"]
-        # result — hex string, например '0x1a2b3c'
+        # result is hex string, e.g. '0x1a2b3c'
         return int(result, 16)
     except Exception as e:
         print(f"get_neon_block_number error: {e}")
         return None
 
 def get_solana_block_number(solana_url):
+    """
+    Get current confirmed slot from Solana RPC using getSlot method
+    """
     try:
         req = {
             "jsonrpc": "2.0",
@@ -245,7 +251,10 @@ def get_solana_block_number(solana_url):
         return None
 
 def healthcheck_block_lag(neon_services, solana_services):
-    # Собираем все нужные пары (neon, solana) по chain
+    """
+    Check block lag between Neon Proxy and Solana RPC endpoints
+    """
+    # Collect all needed pairs (neon, solana) by chain
     pairs = []
     for neon in neon_services:
         neon_chain = neon.get("chain")
@@ -290,6 +299,9 @@ def healthcheck_block_lag(neon_services, solana_services):
                 print(f"Exception in block lag check for {neon_name}/{solana_name}: {e}")
 
 def monitor_neon_transactions(solana_services, redis_conn):
+    """
+    Monitor Neon EVM transactions for all configured networks
+    """
     for solana in solana_services:
         chain = solana.get("chain")
         program_id = solana.get("program_id")
