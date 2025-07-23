@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-docker-image:
-    runs-on: ["gha-runner-scale-set"]
+    runs-on: ubuntu-latest
     steps:
 
     - name: Generate build ID
