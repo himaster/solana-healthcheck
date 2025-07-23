@@ -135,12 +135,12 @@ def export_neon_metrics():
                                 fail_count += 1
                                 r.sadd('neon_failed_signatures', sig)  # Save failed tx signature
                             r.sadd('neon_signatures', sig)
-                    # Обновляем метрики после подсчёта
+                    # Update metrics after counting
                     neon_tx_count.labels(chain=None, program_id=None, solana_url=None).inc(success_count + fail_count)
                     neon_tx_fail_count.labels(chain=None, program_id=None, solana_url=None).inc(fail_count)
                     if total > 0:
                         neon_tx_success_ratio.labels(chain=None, program_id=None, solana_url=None).set(success_count / total)
-            # В конце каждого успешного цикла обновляем timestamp
+            # Update timestamp at the end of each successful cycle
             neon_exporter_last_update_timestamp.set(time.time())
             time.sleep(30)
             backoff = exponential_backoff()  # reset backoff on success
@@ -359,7 +359,7 @@ def monitor_neon_transactions(solana_services, redis_conn):
 
 def main():
     killer = GracefulKiller()
-    # Читаем config.yaml
+    # Read config.yaml
     try:
         with open("config.yaml", "r") as yamlfile:
             data = yaml.load(yamlfile, Loader=yaml.FullLoader)
@@ -367,11 +367,11 @@ def main():
     except Exception as e:
         print(f"Failed to read config.yaml: {e}", flush=True)
         data = {"solana_servers": [], "wallets": [], "neon_services": [], "solana_services": []}
-    # Восстанавливаем счётчики из Redis
+    # Restore counters from Redis
     restore_counters(data.get("solana_services", []), r)
     while True:
         try:
-            # Старая логика
+            # Legacy logic
             for server_group in data.get("solana_servers", []):
                 for server in server_group.get("servers", []):
                     result = healthcheck(server)
@@ -379,9 +379,9 @@ def main():
             for wallet in data.get("wallets", []):
                 result = check_balance(wallet, data.get("solana_services", []))
                 solana_wallet_balance.labels(address=wallet["value"], name=wallet["name"]).set(result)
-            # Новая логика для neon_proxy_block_lag
+            # New logic for neon_proxy_block_lag
             healthcheck_block_lag(data.get("neon_services", []), data.get("solana_services", []))
-            # Новый мониторинг Neon транзакций по всем сетям
+            # New Neon transaction monitoring for all networks
             monitor_neon_transactions(data.get("solana_services", []), r)
             if killer.kill_now:
                 break
