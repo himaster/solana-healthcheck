@@ -37,7 +37,7 @@ jobs:
         push: true
         file: Dockerfile
         tags: |
-          ${{ github.repository }}:${{ steps.prep.outputs.BUILD_ID }}
-          ${{ github.repository }}:latest
-        cache-from: type=registry,ref=${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:${{ steps.prep.outputs.BUILD_ID }}
+          ghcr.io/${{ github.repository }}:latest
+        cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:latest
         cache-to: type=inline
